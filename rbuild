@@ -197,8 +197,33 @@ func select_cmd(database_name, cmd_name) {
 
   res = $(sqlite3 ${database_name} <<< query)
 
+  if res.out() == "" {
+    print("command: '", cmd_name, "' not found")
+    exit
+  }
+
   str_cmd = string(res).split("|")
   return str_cmd[1]
+}
+
+func files_to_send(database_name, server = null) {
+  query = "select * from files;"
+  res_files = $(sqlite3 ${database_name} <<< query)
+  last_build = null
+
+  if server == null {
+    query = "select last_build from servers;"
+    res_server = $(sqlite3 ${database_name} <<< query)
+
+    if int($(wc -l << ${res_server.out()})) != 1 {
+      print("server must be specified")
+      exit
+    } else {
+      last_build = res_server.out()
+    }
+  }
+
+  print(last_build)
 }
 
 func handle_args(argv) {
@@ -256,6 +281,7 @@ func handle_args(argv) {
     default {
       db_name = search_main_file(DATABASE_NAME)
       print(select_cmd(db_name, argv[0]))
+      files_to_send(db_name)
     }
   }
 }
