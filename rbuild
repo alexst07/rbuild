@@ -46,7 +46,7 @@ func count_servers(database_name) {
   query = "select count(*) from servers;"
 
   res = $(sqlite3 ${database_name} <<< query)
-  return int(res)
+  return int(res.out())
 }
 
 func list_track_files(database_name) {
@@ -54,8 +54,22 @@ func list_track_files(database_name) {
 
   res = $(sqlite3 ${database_name} <<< query)
 
-  for f in res {
-    print(f)
+  if res.out() != "" {
+    return array(res)
+  } else {
+    return null
+  }
+}
+
+func print_list_track_files(database_name) {
+  files = list_track_files(database_name)
+
+  if files == null {
+    return
+  } else {
+    for f in files {
+      print(f)
+    }
   }
 }
 
@@ -206,7 +220,7 @@ func select_cmd(database_name, cmd_name) {
   return str_cmd[1]
 }
 
-func files_to_send(database_name, server = null) {
+func get_server_last_build(database_name, server = null) {
   query = "select * from files;"
   res_files = $(sqlite3 ${database_name} <<< query)
   last_build = null
@@ -215,15 +229,83 @@ func files_to_send(database_name, server = null) {
     query = "select last_build from servers;"
     res_server = $(sqlite3 ${database_name} <<< query)
 
-    if int($(wc -l << ${res_server.out()})) != 1 {
+    num_servers = count_servers(database_name)
+
+    if num_servers > 1 {
       print("server must be specified")
       exit
-    } else {
+    } else if num_servers == 1 {
       last_build = res_server.out()
+    } else {
+      print("no server found")
+      exit
+    }
+  } else {
+    query = "select last_build from servers where name='" + server + "';"
+    res_server = $(sqlite3 ${database_name} <<< query)
+
+    if (res_server.out() != "") {
+      last_build = res_server.out()
+    } else {
+      print("server " + server + " not found")
+      exit
     }
   }
 
-  print(last_build)
+  return last_build
+}
+
+func split_datetime(v) {
+  datetime = v.split(" ");
+  date = datetime[0]
+  time = datetime[1]
+
+  date = date.split("-")
+  year = date[0]
+  month = date[1]
+  day = date[2]
+
+  time = time.split(":")
+  hour = time[0]
+  min = time[1]
+  sec = time[2]
+
+  return year, month, day, hour, min, sec
+}
+
+func compare_timedate(date1, date2) {
+  print("date1: ", split_datetime(date1))
+}
+
+func get_files_to_send(database_name, last_build) {
+  track_files = list_track_files(database_name)
+
+  if track_files != "" {
+    return array(track_files)
+  }
+}
+
+func print_files_to_send(database_name, last_build) {
+  track_files = list_track_files(database_name)
+
+  for file in track_files {
+    print(file, ":", file_datetime(file))
+    compare_timedate(file_datetime(file))
+  }
+}
+
+func update_server_last_build(database_name, server = null) {
+  if count_servers(database_name) == 1 {
+    query = "update servers set last_build=datetime();"
+    sqlite3 ${database_name} <<< query
+  } else {
+    if server == null {
+      exit
+    }
+
+    query = "update servers set last_build=datetime() where name='" + server + "';"
+    sqlite3 ${database_name} <<< query
+  }
 }
 
 func handle_args(argv) {
@@ -240,7 +322,7 @@ func handle_args(argv) {
 
     case "ls" {
       db_name = search_main_file(DATABASE_NAME)
-      list_track_files(db_name)
+      print_list_track_files(db_name)
     }
 
     case "add" {
@@ -278,10 +360,24 @@ func handle_args(argv) {
       add_cmd(db_name, argv[1], argv[2])
     }
 
+    case "to" {
+      if len(argv) < 3 {
+        print("server and command must be set")
+        exit
+      }
+
+      db_name = search_main_file(DATABASE_NAME)
+      print(select_cmd(db_name, argv[2]))
+      get_server_last_build(db_name, argv[1])
+    }
+
     default {
       db_name = search_main_file(DATABASE_NAME)
       print(select_cmd(db_name, argv[0]))
-      files_to_send(db_name)
+      last_build = get_server_last_build(db_name)
+      print("last_build: ", last_build)
+      print_files_to_send(db_name, last_build)
+      update_server_last_build(db_name)
     }
   }
 }
