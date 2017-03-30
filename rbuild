@@ -255,57 +255,200 @@ func get_server_last_build(database_name, server = null) {
   return last_build
 }
 
-func split_datetime(v) {
-  datetime = v.split(" ");
-  date = datetime[0]
-  time = datetime[1]
+class Date {
+  func __init__(v) {
+    datetime = v.split(" ");
+    date = datetime[0]
+    time = datetime[1]
 
-  date = date.split("-")
-  year = date[0]
-  month = date[1]
-  day = date[2]
+    date = date.split("-")
+    this.year = int(date[0])
+    this.month = int(date[1])
+    this.day = int(date[2])
 
-  time = time.split(":")
-  hour = time[0]
-  min = time[1]
-  sec = time[2]
+    time = time.split(":")
+    this.hour = int(time[0])
+    this.min = int(time[1])
+    this.sec = int(time[2])
+  }
 
-  return year, month, day, hour, min, sec
-}
+  func equal(date) {
+    b = this.year == data.year && this.month == data.month &&
+        this.day == data.day && this.hour == data.hour &&
+        this.min == data.min && this.sec == data.sec
 
-func compare_timedate(date1, date2) {
-  print("date1: ", split_datetime(date1))
+    return b
+  }
+
+  func lesser(date) {
+    if this.year < date.year {
+      return true
+    } else if this.year > date.year {
+      return false
+    } else if this.month < date.month {
+      return true
+    } else if this.month > date.month {
+      return false
+    } else if this.day < date.day {
+      return true
+    } else if this.day > date.day {
+      return false
+    } else if this.hour < date.hour {
+      return true
+    } else if this.hour > date.hour {
+      return false
+    } else if this.min < date.min {
+      return true
+    } else if this.min > date.min {
+      return false
+    } else if this.sec < date.sec {
+      return true
+    } else if this.sec > date.sec {
+      return false
+    } else {
+      return false
+    }
+  }
+
+  func __eq__(date) {
+    return this.equal(date)
+  }
+
+  func __lt__(date) {
+    return this.lesser(date)
+  }
+
+  func __gt__(date) {
+    return !this.lesser(date)
+  }
+
+  func __print__() {
+    return string(this.year) + "-" + string(this.month) + "-" +
+           string(this.day) + " " + string(this.hour) + ":" +
+           string(this.min) + ":" + string(this.sec)
+  }
 }
 
 func get_files_to_send(database_name, last_build) {
   track_files = list_track_files(database_name)
 
-  if track_files != "" {
-    return array(track_files)
+  date_build = Date(last_build)
+  print("date build: ", date_build)
+
+  arr_files = []
+  for file in track_files {
+    date_file = Date(file_datetime(file))
+    print(date_file)
+
+    if date_build < date_file {
+      arr_files.append(file)
+    }
   }
+
+  return arr_files
 }
 
 func print_files_to_send(database_name, last_build) {
-  track_files = list_track_files(database_name)
+  files = get_files_to_send(database_name, last_build)
 
-  for file in track_files {
-    print(file, ":", file_datetime(file))
-    compare_timedate(file_datetime(file))
+  for file in files {
+    print(file)
   }
 }
 
 func update_server_last_build(database_name, server = null) {
+  now = $(date +"%Y-%m-%d %H:%M:%S")
+
   if count_servers(database_name) == 1 {
-    query = "update servers set last_build=datetime();"
+    query = "update servers set last_build='" + now + "';"
     sqlite3 ${database_name} <<< query
   } else {
     if server == null {
       exit
     }
 
-    query = "update servers set last_build=datetime() where name='" + server + "';"
+    query = "update servers set last_build='" + now + "' where name='" +
+        server + "';"
     sqlite3 ${database_name} <<< query
   }
+}
+
+func server_data(database_name, server = null) {
+  query = ""
+
+  if count_servers(database_name) == 1 {
+    query = " from servers;"
+  } else {
+    if server == null {
+      exit
+    }
+
+    query = " from servers where name='" + server + "';"
+  }
+
+  # user
+  query_user = "select user" + query
+  res_server = $(sqlite3 ${database_name} <<< query_user)
+  user = string(res_server)
+
+  # addr
+  query_addr = "select addr" + query
+  res_server = $(sqlite3 ${database_name} <<< query_addr)
+  addr = string(res_server)
+
+  # pem
+  query_pem = "select pem" + query
+  res_server = $(sqlite3 ${database_name} <<< query_pem)
+  pem = string(res_server)
+
+  # sshpath
+  query_path = "select path" + query
+  res_server = $(sqlite3 ${database_name} <<< query_path)
+  sshpath = string(res_server)
+
+  return user, addr, pem, sshpath
+}
+
+func scp_cmd(database_name, server = null) {
+  user, addr, pem, sshpath = server_data(database_name, server)
+
+  scp_args = []
+  last_build = get_server_last_build(database_name)
+  files_send = get_files_to_send(database_name, last_build)
+  scp_args.extend(files_send)
+  print(files_send)
+
+  if pem != "" {
+    scp_args.append("-i")
+    scp_args.append(pem)
+  }
+
+  addr = user + "@" + addr + ":" + sshpath
+  scp_args.append(addr)
+
+  scp ${scp_args}
+}
+
+func ssh_cmd(database_name, cmd_content, server = null) {
+  user, addr, pem, sshpath = server_data(database_name, server)
+
+  ssh_args = []
+  addr = user + "@" + addr + ":" + sshpath
+  ssh_args.append(addr)
+  ssh_args.append("bash -s")
+
+  ssh ${ssh_args} << ${cmd_content}
+}
+
+func exec_cmd(database_name, cmd_content, server = null) {
+  # send files the was modified since last build
+  scp_cmd(database_name, server)
+
+  # send the command
+  ssh_cmd(database_name, cmd_content, server)
+
+  # update data of last build
+  update_server_last_build(database_name)
 }
 
 func handle_args(argv) {
@@ -377,6 +520,7 @@ func handle_args(argv) {
       last_build = get_server_last_build(db_name)
       print("last_build: ", last_build)
       print_files_to_send(db_name, last_build)
+      scp_cmd(db_name)
       update_server_last_build(db_name)
     }
   }
