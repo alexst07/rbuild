@@ -207,7 +207,7 @@ func add_cmd(database_name, cmd_name, cmd_line) {
 }
 
 func select_cmd(database_name, cmd_name) {
-  query = "select name, line from cmds where name='" + cmd_name + "';"
+  query = "select line from cmds where name='" + cmd_name + "';"
 
   res = $(sqlite3 ${database_name} <<< query)
 
@@ -216,8 +216,7 @@ func select_cmd(database_name, cmd_name) {
     exit
   }
 
-  str_cmd = string(res).split("|")
-  return str_cmd[1]
+  return string(res)
 }
 
 func get_server_last_build(database_name, server = null) {
