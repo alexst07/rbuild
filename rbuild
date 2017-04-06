@@ -2,6 +2,13 @@
 
 DATABASE_NAME = ".rbuild.db"
 
+func msg_err(msg...) {
+  RED = "\033[0;31m"
+  NC = "\033[0m" # No Color
+
+  print(RED, array(msg).join(), NC)
+}
+
 func create_database(database_name) {
   query = "create table files(file_path varchar(1024), "+
           "last_modified datetime, primary key(file_path));"
@@ -39,7 +46,7 @@ func search_main_file(file_name) {
   }
 
   print(file_name, " don't exists")
-  exit
+  exit 1
 }
 
 func count_servers(database_name) {
@@ -133,43 +140,54 @@ func add_file(database_name, str_file) {
   }
 }
 
+func remove_file(database_name, str_file) {
+  query = "delete from files where file_path='" + str_file + "';"
+  sqlite3 ${database_name} <<< query
+}
+
 func add_server(database_name, map_args) {
-  if !map_args.exists("name") {
+  if !map_args.exists("--name") {
     print("name not set")
-    exit
+    exit 1
   }
 
-  if !map_args.exists("addr") {
+  if !map_args.exists("--addr") {
     print("addr not set")
-    exit
+    exit 1
   }
 
-  name = map_args["name"]
-  addr = map_args["addr"]
+  name = map_args["--name"]
+  addr = map_args["--addr"]
   user = ""
   path_srv = ""
   pem = ""
   args = ""
 
-  if map_args.exists("user") {
-    user = map_args["user"]
+  if map_args.exists("--user") {
+    user = map_args["--user"]
   }
 
-  if map_args.exists("path-srv") {
-    path_srv = map_args["path-srv"]
+  if map_args.exists("--path-srv") {
+    path_srv = map_args["--path-srv"]
   }
 
-  if map_args.exists("pem") {
-    path_srv = map_args["pem"]
+  if map_args.exists("--pem") {
+    path_srv = map_args["--pem"]
   }
 
-  if map_args.exists("args") {
-    path_srv = map_args["args"]
+  if map_args.exists("--args") {
+    path_srv = map_args["--args"]
   }
 
   query = "insert into servers values('" + name + "', '"+
            addr + "','" + user + "','" + path_srv + "','" +
            pem + "','" + args + "', '');"
+
+  sqlite3 ${database_name} <<< query
+}
+
+func remove_server(database_name, server_name) {
+  query = "delete from servers where name=''" + server_name + ";"
 
   sqlite3 ${database_name} <<< query
 }
@@ -206,17 +224,24 @@ func add_cmd(database_name, cmd_name, cmd_line) {
   sqlite3 ${database_name} <<< query
 }
 
+func remove_cmd(database_name, cmd_name) {
+  query = "delete from cmds where name ='" + cmd_name + "';"
+
+  sqlite3 ${database_name} <<< query
+}
+
 func select_cmd(database_name, cmd_name) {
-  query = "select line from cmds where name='" + cmd_name + "';"
+  query = "select name, line from cmds where name='" + cmd_name + "';"
 
   res = $(sqlite3 ${database_name} <<< query)
 
   if res.out() == "" {
     print("command: '", cmd_name, "' not found")
-    exit
+    exit 1
   }
 
-  return string(res)
+  str_cmd = string(res).split("|")
+  return str_cmd[1]
 }
 
 func get_server_last_build(database_name, server = null) {
@@ -232,12 +257,12 @@ func get_server_last_build(database_name, server = null) {
 
     if num_servers > 1 {
       print("server must be specified")
-      exit
+      exit 1
     } else if num_servers == 1 {
       last_build = res_server.out()
     } else {
       print("no server found")
-      exit
+      exit 1
     }
   } else {
     query = "select last_build from servers where name='" + server + "';"
@@ -247,7 +272,7 @@ func get_server_last_build(database_name, server = null) {
       last_build = res_server.out()
     } else {
       print("server " + server + " not found")
-      exit
+      exit 1
     }
   }
 
@@ -363,7 +388,7 @@ func update_server_last_build(database_name, server = null) {
     sqlite3 ${database_name} <<< query
   } else {
     if server == null {
-      exit
+      exit 1
     }
 
     query = "update servers set last_build='" + now + "' where name='" +
@@ -379,7 +404,7 @@ func server_data(database_name, server = null) {
     query = " from servers;"
   } else {
     if server == null {
-      exit
+      exit 1
     }
 
     query = " from servers where name='" + server + "';"
@@ -439,9 +464,12 @@ func ssh_cmd(database_name, cmd_content, server = null) {
   ssh ${ssh_args} << ${cmd_content}
 }
 
-func exec_cmd(database_name, cmd_content, server = null) {
+func exec_cmd(database_name, cmd_name, server = null) {
   # send files the was modified since last build
   scp_cmd(database_name, server)
+
+  # get command content
+  cmd_content = select_cmd(db_name, cmd_name)
 
   # send the command
   ssh_cmd(database_name, cmd_content, server)
@@ -456,7 +484,7 @@ func handle_args(argv) {
       create_database(DATABASE_NAME)
     }
 
-    case "add-git-files" {
+    case "add-git" {
       db_name = search_main_file(DATABASE_NAME)
       files = list_git_files(db_name)
       add_git_files(db_name, files)
@@ -470,17 +498,28 @@ func handle_args(argv) {
     case "add" {
       if len(argv) < 2 {
         print("not file")
-        exit
+        exit 1
       }
 
       db_name = search_main_file(DATABASE_NAME)
       add_file(db_name, argv[1])
     }
 
+    case "rm" {
+      db_name = search_main_file(DATABASE_NAME)
+      if argv[0][0] == "@" {
+        remove_server(db_name, argv[0][1:])
+      } else if argv[0][0] == ">" {
+        remove_cmd(db_name, argv[0][1:])
+      } else {
+        remove_file(db_name, argv[0])
+      }
+    }
+
     case "add-server" {
       if len(argv) < 2 {
         print("no arguments for server options")
-        exit
+        exit 1
       }
 
       db_name = search_main_file(DATABASE_NAME)
@@ -495,39 +534,58 @@ func handle_args(argv) {
     case "cmd" {
        if len(argv) < 3 {
         print("commands arguments not correct")
-        exit
+        exit 1
       }
 
       db_name = search_main_file(DATABASE_NAME)
       add_cmd(db_name, argv[1], argv[2])
     }
 
-    case "to" {
-      if len(argv) < 3 {
-        print("server and command must be set")
-        exit
+    default {
+      if len(argv) < 2 {
+        print("command not not specified")
+        exit 1
       }
 
       db_name = search_main_file(DATABASE_NAME)
-      print(select_cmd(db_name, argv[2]))
-      get_server_last_build(db_name, argv[1])
-    }
 
-    default {
-      db_name = search_main_file(DATABASE_NAME)
-      print(select_cmd(db_name, argv[0]))
-      last_build = get_server_last_build(db_name)
-      print("last_build: ", last_build)
-      print_files_to_send(db_name, last_build)
-      scp_cmd(db_name)
-      update_server_last_build(db_name)
+      # check if the first is a server name
+      if argv[0][0] == "@" {
+        server_name = argv[0][1:]
+        exec_cmd(db_name, argv[1], server_name)
+      } else {
+        exec_cmd(db_name, argv[1], server_name)
+      }
     }
   }
 }
 
 func usage() {
-  print("usage:")
-  print("  rbuild [options]")
+  print("usage: rbuild [--version] [--help]")
+  print("              <command> [<args>]")
+  print("")
+  print("start a working area")
+  print("   init         Create database of rbuild, must be on the root of the project")
+  print("")
+  print("work on the current change")
+  print("   add          Add file to the index")
+  print("   add-git      Add files from git repository")
+  print("   add-server   Add a server on the list")
+  print("   cmd          Add a command on database")
+  print("   rm           Remove a file or a server or a command")
+  print("")
+  print("examine the history and state")
+  print("   ls           Show the files tracked")
+  print("   ls-servers   Show the server on database")
+  print("   ls-cmds      Show the commands stored on database")
+  print("")
+  print("commands for server")
+  print("   rbuild <cmd_name>")
+  print("      Send a command for the server, if there is only one server")
+  print("")
+  print("   rbuild @server_name <cmd_name>")
+  print("      Send a command for the server specified")
+  print("")
 }
 
 func main(argv) {
